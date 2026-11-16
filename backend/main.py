@@ -2,6 +2,7 @@ import os
 import shutil
 import sqlite3
 import time
+import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from google import genai
 from google.genai import types
 from qdrant_client import QdrantClient
 import redis
+from tools import STUDENT_TOOLS, LAST_TRIGGERED_UI
 
 from rag import ensure_collection, ingest_document, delete_document, retrieve_context
 
@@ -86,6 +88,8 @@ def verify_admin(x_admin_password: str | None):
 class ChatRequest(BaseModel):
     session_id: str = "default"
     message: str
+    id_login: str | None = None          # Maps to tracker.sender_id / IdLogin in Rasa
+    role: str = "mahasiswa"              # 'mahasiswa', 'dosen', or 'dosenwali'
 
 @app.get("/health")
 def health_check():
@@ -158,43 +162,69 @@ def chat_endpoint(req: ChatRequest):
 
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute("SELECT value FROM settings WHERE key = 'system_prompt'").fetchone()
-    base_prompt = row[0] if row else "You are a helpful trisakti university assistant, UsaktiBot."
+    base_prompt = row[0] if row else "Kamu adalah asisten virtual resmi Universitas Trisakti."
 
     try:
-        # 1. Retrieve relevant university chunks from Qdrant
-        matches = retrieve_context(req.message, ai_client, qdrant, top_k=4)
+        # 1. Retrieve relevant docs from Qdrant FIRST (defines context_block)
+        matches = retrieve_context(f"[{req.role}] {req.message}", ai_client, qdrant, top_k=4)
         if matches:
-            context_block = "\n\n".join(
-                [f"[Sumber: {m['source']}]\n{m['text']}" for m in matches]
-            )
+            context_block = "\n\n".join([f"[Sumber: {m['source']}]\n{m['text']}" for m in matches])
             sources_used = list(dict.fromkeys([m["source"] for m in matches]))
         else:
-            context_block = "(Tidak ada dokumen kampus yang cocok ditemukan untuk pertanyaan ini.)"
+            context_block = "(Tidak ada dokumen panduan yang cocok.)"
             sources_used = []
+
+        # 2. Clear any previous UI trigger for this session
+        LAST_TRIGGERED_UI.pop(req.session_id, None)
 
         augmented_prompt = (
             f"{base_prompt}\n\n"
-            f"=== KONTEKS DOKUMEN KAMPUS ===\n"
-            f"{context_block}\n"
+            f"=== INFO PENGGUNA ===\n"
+            f"Session ID: {req.session_id} | Role: {req.role.upper()} | IdLogin: {req.id_login or 'Guest'}\n\n"
+            f"=== ATURAN RESPONS SINGKAT ===\n"
+            f"1. Jawab dengan RINGKAS, PADAT, dan TO THE POINT (maksimal 2-3 kalimat pendek, jangan bertele-tele).\n"
+            f"2. Jika pengguna meminta melihat hasil/data layanan (contoh: 'hasil KHS', 'lihat KRS', 'tagihan pembayaran', 'status cuti'), "
+            f"WAJIB panggil tool `trigger_ui_context(session_id='{req.session_id}', menu_context=...)` dan cukup berikan 1 kalimat pengantar singkat karena aplikasi akan langsung menampilkan tombol/halaman datanya.\n"
+            f"3. Hanya jelaskan langkah-langkah panjang jika pengguna secara spesifik bertanya 'prosedur' atau 'syarat'.\n\n"
+            f"=== KONTEKS DOKUMEN KAMPUS ===\n{context_block}\n"
             f"=============================="
         )
 
-        # 2. Generate grounded answer with Gemini
+        # 3. Load multi-turn history from Redis
+        raw_hist = cache.get(f"chat_hist:{req.session_id}")
+        history_list = json.loads(raw_hist) if raw_hist else []
+        contents = [
+            types.Content(role=h["role"], parts=[types.Part.from_text(text=h["text"])])
+            for h in history_list
+        ]
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=req.message)]))
+
+        # 4. Generate response with Gemini + Tools
         response = ai_client.models.generate_content(
             model="gemini-3.5-flash-lite",
-            contents=req.message,
+            contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=augmented_prompt,
+                tools=STUDENT_TOOLS,
                 temperature=0.2,
             )
         )
         reply = response.text
+
+        # 5. Grab the UI context triggered during tool execution
+        triggered_ctx = LAST_TRIGGERED_UI.pop(req.session_id, None)
+        custom_payload = {"context": triggered_ctx} if triggered_ctx else {}
+
+        # 6. Save history to Redis
+        history_list.append({"role": "user", "text": req.message})
+        history_list.append({"role": "model", "text": reply})
+        cache.setex(f"chat_hist:{req.session_id}", 3600, json.dumps(history_list[-20:]))
+
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
 
     latency = int((time.time() - start_time) * 1000)
-
     conn.execute(
         "INSERT INTO chat_logs (session_id, user_message, bot_response, sources, latency_ms) VALUES (?, ?, ?, ?, ?)",
         (req.session_id, req.message, reply, ", ".join(sources_used), latency)
@@ -204,6 +234,7 @@ def chat_endpoint(req: ChatRequest):
 
     return {
         "reply": reply,
+        "custom": custom_payload,
         "sources": sources_used,
         "latency_ms": latency
     }
