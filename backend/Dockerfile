@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+google-genai>=1.0.0
+qdrant-client>=1.12.0
+redis>=5.2.0
+pypdf>=5.1.0
+python-multipart>=0.0.20
+pydantic-settings>=2.7.0
