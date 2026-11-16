@@ -1,0 +1,20 @@
+PANDUAN AKADEMIK & PENGISIAN KRS UNIVERSITAS TRISAKTI
+
+1. Jadwal & Syarat Pengisian KRS
+- Pengisian Kartu Rencana Studi (KRS) dilakukan secara online melalui portal akademik mahasiswa (SIS) pada awal setiap semester sesuai kalender akademik.
+- Mahasiswa wajib melunasi pembayaran Biaya Penyelenggaraan Pendidikan (BPP) Pokok melalui Virtual Account (VA) BNI sebelum menu pengisian KRS terbuka di sistem.
+- Maksimum SKS yang dapat diambil ditentukan berdasarkan Indeks Prestasi Semester (IPS) sebelumnya:
+  * IPS >= 3.00: Maksimal 24 SKS
+  * IPS 2.50 - 2.99: Maksimal 21 SKS
+  * IPS 2.00 - 2.49: Maksimal 18 SKS
+  * IPS < 2.00: Maksimal 15 SKS
+- Setelah memilih mata kuliah, mahasiswa wajib melakukan konsultasi dan meminta persetujuan (approval) dari Dosen Wali agar KRS berstatus sah.
+
+2. Pengajuan Cuti Akademik (Cuti Kuliah)
+- Mahasiswa aktif yang telah menempuh minimal 2 (dua) semester berturut-turut dapat mengajukan cuti akademik maksimal 2 semester selama masa studi.
+- Pengajuan cuti dilakukan melalui portal mahasiswa sebelum batas akhir masa perubahan KRS (Batal/Tambah) dengan melampirkan surat permohonan yang disetujui Dosen Wali dan Ketua Program Studi.
+- Mahasiswa berstatus cuti tetap dikenakan biaya administrasi cuti sesuai ketentuan keuangan universitas, dan masa cuti tidak dihitung sebagai masa studi aktif.
+
+3. Pembayaran & Status Virtual Account (VA) BNI
+- Pembayaran uang kuliah menggunakan nomor Virtual Account BNI yang tertera pada tagihan di portal keuangan mahasiswa.
+- Status pembayaran akan terverifikasi otomatis oleh sistem dalam waktu 1x24 jam setelah transfer berhasil. Jika status belum berubah setelah 24 jam, mahasiswa dapat menghubungi bagian Keuangan atau BAAK dengan melampirkan bukti transfer.
