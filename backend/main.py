@@ -1,20 +1,25 @@
+import csv
+import hashlib
+import io
+import json
 import os
 import shutil
 import sqlite3
 import time
-import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 import httpx
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 from qdrant_client import QdrantClient
 import redis
-from tools import STUDENT_TOOLS, LAST_TRIGGERED_UI
 
 from rag import ensure_collection, ingest_document, delete_document, retrieve_context
+from tools import STUDENT_TOOLS, LAST_TRIGGERED_UI
 
 DB_PATH = "/app/data/chatbot.db"
 UPLOAD_DIR = "/app/data/uploads"
@@ -50,7 +55,7 @@ def init_db():
     """)
     conn.execute("""
         INSERT OR IGNORE INTO settings (key, value)
-        VALUES ('system_prompt', 'Kamu adalah asisten virtual resmi Universitas Trisakti. Jawablah pertanyaan mahasiswa dan calon mahasiswa secara ramah, akurat, dan ringkas berdasarkan KONTEKS DOKUMEN KAMPUS yang diberikan. Jika informasi tidak ada di dalam konteks, katakan dengan jujur bahwa kamu belum memiliki data tersebut dan arahkan pengguna untuk menghubungi BAAK / layanan informasi kampus. Jangan mengarang aturan atau jadwal.')
+        VALUES ('system_prompt', 'Kamu adalah asisten virtual resmi Universitas Trisakti. Jawablah pertanyaan mahasiswa, dosen, dan calon mahasiswa secara ramah, akurat, dan ringkas berdasarkan KONTEKS DOKUMEN KAMPUS yang diberikan. Jika informasi tidak ada di dalam konteks, katakan dengan jujur bahwa kamu belum memiliki data tersebut dan arahkan pengguna untuk menghubungi BAAK / layanan informasi kampus. Jangan mengarang aturan atau jadwal.')
     """)
     conn.commit()
     conn.close()
@@ -70,7 +75,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Force HTTP/1.1 + IPv4 local bind for fast Docker Desktop networking
+# Force HTTP/1.1 + IPv4 local bind for fast Docker networking
 transport = httpx.HTTPTransport(local_address="0.0.0.0", http2=False)
 http_client = httpx.Client(transport=transport, timeout=httpx.Timeout(30.0, connect=10.0))
 
@@ -88,8 +93,11 @@ def verify_admin(x_admin_password: str | None):
 class ChatRequest(BaseModel):
     session_id: str = "default"
     message: str
-    id_login: str | None = None          # Maps to tracker.sender_id / IdLogin in Rasa
-    role: str = "mahasiswa"              # 'mahasiswa', 'dosen', or 'dosenwali'
+    id_login: str | None = None
+    role: str = "mahasiswa"
+
+class SettingsRequest(BaseModel):
+    system_prompt: str
 
 @app.get("/health")
 def health_check():
@@ -99,7 +107,12 @@ def health_check():
         "redis_ping": cache.ping()
     }
 
-# --- ADMIN KNOWLEDGE BASE ENDPOINTS ---
+# --- ADMIN WEB UI & ENDPOINTS ---
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_ui():
+    with open("/app/admin.html", "r", encoding="utf-8") as f:
+        return f.read()
 
 @app.post("/api/admin/upload")
 async def upload_document(
@@ -114,7 +127,6 @@ async def upload_document(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Remove old vectors if re-uploading the same filename
     delete_document(file.filename, qdrant)
     chunks_added = ingest_document(file_path, file.filename, ai_client, qdrant)
 
@@ -125,10 +137,7 @@ async def upload_document(
     )
     conn.commit()
     conn.close()
-
-    # Clear Redis FAQ cache whenever knowledge base updates
     cache.flushdb()
-
     return {"filename": file.filename, "chunks_indexed": chunks_added}
 
 @app.get("/api/admin/documents")
@@ -146,7 +155,6 @@ def remove_document(filename: str, x_admin_password: str | None = Header(default
     file_path = os.path.join(UPLOAD_DIR, filename)
     if os.path.exists(file_path):
         os.remove(file_path)
-
     conn = sqlite3.connect(DB_PATH)
     conn.execute("DELETE FROM documents WHERE filename = ?", (filename,))
     conn.commit()
@@ -154,18 +162,88 @@ def remove_document(filename: str, x_admin_password: str | None = Header(default
     cache.flushdb()
     return {"deleted": filename}
 
-# --- RAG CHAT ENDPOINT ---
+@app.get("/api/admin/settings")
+def get_settings(x_admin_password: str | None = Header(default=None)):
+    verify_admin(x_admin_password)
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT value FROM settings WHERE key = 'system_prompt'").fetchone()
+    conn.close()
+    return {"system_prompt": row[0] if row else ""}
+
+@app.post("/api/admin/settings")
+def update_settings(req: SettingsRequest, x_admin_password: str | None = Header(default=None)):
+    verify_admin(x_admin_password)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('system_prompt', ?)", (req.system_prompt,))
+    conn.commit()
+    conn.close()
+    cache.flushdb()
+    return {"status": "updated"}
+
+@app.get("/api/admin/logs")
+def get_logs(x_admin_password: str | None = Header(default=None)):
+    verify_admin(x_admin_password)
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT created_at, user_message, bot_response, sources, latency_ms FROM chat_logs ORDER BY id DESC LIMIT 50"
+    ).fetchall()
+    conn.close()
+    return [
+        {"created_at": r[0], "user_message": r[1], "bot_response": r[2], "sources": r[3], "latency_ms": r[4]}
+        for r in rows
+    ]
+
+@app.get("/api/admin/logs/csv")
+def export_logs_csv(x_admin_password: str | None = Header(default=None)):
+    verify_admin(x_admin_password)
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT id, created_at, session_id, user_message, bot_response, sources, latency_ms FROM chat_logs ORDER BY id DESC"
+    ).fetchall()
+    conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Timestamp", "Session", "User Message", "Bot Response", "Sources", "Latency (ms)"])
+    writer.writerows(rows)
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=usakti_chat_logs.csv"}
+    )
+
+# --- CHAT ENDPOINT WITH FAQ CACHE & RATE-LIMIT GUARD ---
+
+def make_faq_cache_key(role: str, message: str) -> str:
+    normalized = f"{role.lower().strip()}:{' '.join(message.lower().split())}"
+    return "faq_cache:" + hashlib.sha256(normalized.encode()).hexdigest()
 
 @app.post("/api/chat")
 def chat_endpoint(req: ChatRequest):
     start_time = time.time()
+    faq_key = make_faq_cache_key(req.role, req.message)
+
+    # 1. Check Redis FAQ cache first (saves free API quota & responds in <10ms!)
+    cached_raw = cache.get(faq_key)
+    if cached_raw:
+        cached_data = json.loads(cached_raw)
+        latency = int((time.time() - start_time) * 1000)
+        return {
+            "reply": cached_data["reply"],
+            "custom": cached_data["custom"],
+            "sources": cached_data["sources"],
+            "cached": True,
+            "latency_ms": latency
+        }
 
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute("SELECT value FROM settings WHERE key = 'system_prompt'").fetchone()
     base_prompt = row[0] if row else "Kamu adalah asisten virtual resmi Universitas Trisakti."
 
     try:
-        # 1. Retrieve relevant docs from Qdrant FIRST (defines context_block)
+        # 2. Retrieve relevant docs from Qdrant
         matches = retrieve_context(f"[{req.role}] {req.message}", ai_client, qdrant, top_k=4)
         if matches:
             context_block = "\n\n".join([f"[Sumber: {m['source']}]\n{m['text']}" for m in matches])
@@ -174,7 +252,6 @@ def chat_endpoint(req: ChatRequest):
             context_block = "(Tidak ada dokumen panduan yang cocok.)"
             sources_used = []
 
-        # 2. Clear any previous UI trigger for this session
         LAST_TRIGGERED_UI.pop(req.session_id, None)
 
         augmented_prompt = (
@@ -211,15 +288,32 @@ def chat_endpoint(req: ChatRequest):
         )
         reply = response.text
 
-        # 5. Grab the UI context triggered during tool execution
         triggered_ctx = LAST_TRIGGERED_UI.pop(req.session_id, None)
         custom_payload = {"context": triggered_ctx} if triggered_ctx else {}
 
-        # 6. Save history to Redis
+        # Save conversation history
         history_list.append({"role": "user", "text": req.message})
         history_list.append({"role": "model", "text": reply})
         cache.setex(f"chat_hist:{req.session_id}", 3600, json.dumps(history_list[-20:]))
 
+        # Cache standalone FAQ responses for 24h (only if first turn & no personal ID used)
+        if len(history_list) == 2 and not req.id_login:
+            cache.setex(
+                faq_key,
+                86400,
+                json.dumps({"reply": reply, "custom": custom_payload, "sources": sources_used})
+            )
+
+    except APIError as e:
+        conn.close()
+        if e.code == 429:
+            return {
+                "reply": "Maaf, sistem asisten virtual sedang menerima banyak pertanyaan sekaligus. Silakan coba kirim ulang pertanyaan Anda dalam beberapa detik.",
+                "custom": {},
+                "sources": [],
+                "latency_ms": int((time.time() - start_time) * 1000)
+            }
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
@@ -236,5 +330,6 @@ def chat_endpoint(req: ChatRequest):
         "reply": reply,
         "custom": custom_payload,
         "sources": sources_used,
+        "cached": False,
         "latency_ms": latency
     }

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Usakti Chatbot - Admin Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f4f6f9;
+            margin: 0;
+            padding: 24px;
+            color: #1f2937;
+        }
+
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        }
+
+        h1,
+        h2 {
+            margin-top: 0;
+            color: #1e3a8a;
+        }
+
+        input[type="password"],
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        button {
+            background: #1e3a8a;
+            color: #fff;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        button.danger {
+            background: #dc2626;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        button.secondary {
+            background: #059669;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+            font-size: 13px;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 10px;
+            border-bottom: 1px solid #e5e7eb;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f9fafb;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .status {
+            font-size: 13px;
+            margin-top: 8px;
+            color: #059669;
+            font-weight: 500;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎓 Usakti Chatbot — Admin Manager</h1>
+
+        <!-- Login Box -->
+        <div id="loginCard" class="card">
+            <h2>Login Admin</h2>
+            <div class="row">
+                <input type="password" id="adminPass" placeholder="Masukkan ADMIN_PASSWORD..." />
+                <button onclick="login()">Masuk</button>
+            </div>
+            <p id="loginErr" style="color:#dc2626; font-size:13px;"></p>
+        </div>
+
+        <!-- Main Dashboard -->
+        <div id="dashboard" class="hidden">
+            <!-- 1. Knowledge Base -->
+            <div class="card">
+                <h2>📚 Knowledge Base (Dokumen Panduan)</h2>
+                <div class="row">
+                    <input type="file" id="docFile" accept=".pdf,.txt,.md" />
+                    <button onclick="uploadDoc()">Upload & Index</button>
+                </div>
+                <p id="uploadStatus" class="status"></p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nama File</th>
+                            <th>Jumlah Chunks</th>
+                            <th>Waktu Upload</th>
+                            <th>Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody id="docList"></tbody>
+                </table>
+            </div>
+
+            <!-- 2. System Prompt -->
+            <div class="card">
+                <h2>🧠 System Prompt & Aturan Bot</h2>
+                <textarea id="sysPrompt" rows="5"></textarea>
+                <div style="margin-top:10px;">
+                    <button onclick="savePrompt()">Simpan Prompt</button>
+                    <span id="promptStatus" class="status" style="margin-left:10px;"></span>
+                </div>
+            </div>
+
+            <!-- 3. Chat Logs -->
+            <div class="card">
+                <div class="row" style="justify-content: space-between;">
+                    <h2 style="margin:0;">💬 Riwayat Interaksi Terbaru</h2>
+                    <div>
+                        <button onclick="loadLogs()">Refresh</button>
+                        <button class="secondary" onclick="exportCSV()">Download CSV</button>
+                    </div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Waktu</th>
+                            <th>Pertanyaan User</th>
+                            <th>Jawaban Bot</th>
+                            <th>Sumber</th>
+                            <th>Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logList"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let PASS = "";
+
+        async function api(url, opts = {}) {
+            opts.headers = { ...(opts.headers || {}), "x-admin-password": PASS };
+            const res = await fetch(url, opts);
+            if (!res.ok) throw new Error(await res.text());
+            return res;
+        }
+
+        async function login() {
+            PASS = document.getElementById("adminPass").value;
+            try {
+                await loadDocs();
+                await loadPrompt();
+                await loadLogs();
+                document.getElementById("loginCard").classList.add("hidden");
+                document.getElementById("dashboard").classList.remove("hidden");
+            } catch (e) {
+                document.getElementById("loginErr").innerText = "Password salah atau server error.";
+            }
+        }
+
+        async function loadDocs() {
+            const res = await api("/api/admin/documents");
+            const docs = await res.json();
+            document.getElementById("docList").innerHTML = docs.map(d => `
+        <tr>
+          <td><strong>${d.filename}</strong></td>
+          <td>${d.chunk_count}</td>
+          <td>${d.uploaded_at}</td>
+          <td><button class="danger" onclick="delDoc('${d.filename}')">Hapus</button></td>
+        </tr>
+      `).join("") || "<tr><td colspan='4'>Belum ada dokumen.</td></tr>";
+        }
+
+        async function uploadDoc() {
+            const fileInput = document.getElementById("docFile");
+            if (!fileInput.files.length) return;
+            const fd = new FormData();
+            fd.append("file", fileInput.files[0]);
+            document.getElementById("uploadStatus").innerText = "Mengunggah & memproses embeddings...";
+            try {
+                const res = await api("/api/admin/upload", { method: "POST", body: fd });
+                const data = await res.json();
+                document.getElementById("uploadStatus").innerText = `Berhasil! ${data.filename} (${data.chunks_indexed} chunks).`;
+                fileInput.value = "";
+                loadDocs();
+            } catch (e) {
+                document.getElementById("uploadStatus").innerText = "Gagal upload: " + e.message;
+            }
+        }
+
+        async function delDoc(name) {
+            if (!confirm(`Hapus ${name} dari knowledge base?`)) return;
+            await api(`/api/admin/documents/${encodeURIComponent(name)}`, { method: "DELETE" });
+            loadDocs();
+        }
+
+        async function loadPrompt() {
+            const res = await api("/api/admin/settings");
+            const data = await res.json();
+            document.getElementById("sysPrompt").value = data.system_prompt || "";
+        }
+
+        async function savePrompt() {
+            const val = document.getElementById("sysPrompt").value;
+            await api("/api/admin/settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ system_prompt: val })
+            });
+            document.getElementById("promptStatus").innerText = "Tersimpan!";
+            setTimeout(() => document.getElementById("promptStatus").innerText = "", 2500);
+        }
+
+        async function loadLogs() {
+            const res = await api("/api/admin/logs");
+            const logs = await res.json();
+            document.getElementById("logList").innerHTML = logs.map(l => `
+        <tr>
+          <td style="white-space:nowrap;">${l.created_at}</td>
+          <td>${l.user_message}</td>
+          <td>${l.bot_response}</td>
+          <td>${l.sources || "-"}</td>
+          <td>${l.latency_ms} ms</td>
+        </tr>
+      `).join("") || "<tr><td colspan='5'>Belum ada log chat.</td></tr>";
+        }
+
+        async function exportCSV() {
+            const res = await api("/api/admin/logs/csv");
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "usakti_chat_logs.csv";
+            a.click();
+        }
+    </script>
+</body>
+
+</html>
