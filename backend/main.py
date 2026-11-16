@@ -7,9 +7,9 @@ import shutil
 import sqlite3
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from pydantic import BaseModel
 import httpx
 from google import genai
@@ -333,3 +333,42 @@ def chat_endpoint(req: ChatRequest):
         "cached": False,
         "latency_ms": latency
     }
+
+
+
+@app.get("/chat", response_class=HTMLResponse)
+def chat_ui():
+    with open("/app/chat.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+@app.get("/widget.js")
+def embed_widget(request: Request):
+    base_url = str(request.base_url).rstrip("/")
+    js_code = f"""
+    (function() {{
+      const btn = document.createElement('div');
+      btn.innerHTML = '💬';
+      Object.assign(btn.style, {{
+        position: 'fixed', bottom: '20px', right: '20px', width: '56px', height: '56px',
+        borderRadius: '50%', background: '#1e3a8a', color: '#fff', fontSize: '26px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.25)', zIndex: 99999
+      }});
+
+      const frame = document.createElement('iframe');
+      frame.src = '{base_url}/chat';
+      Object.assign(frame.style, {{
+        position: 'fixed', bottom: '88px', right: '20px', width: '370px', height: '540px',
+        maxWidth: '92vw', maxHeight: '75vh', border: 'none', borderRadius: '14px',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.2)', display: 'none', zIndex: 99999
+      }});
+
+      btn.onclick = () => {{
+        frame.style.display = frame.style.display === 'none' ? 'block' : 'none';
+      }};
+
+      document.body.appendChild(btn);
+      document.body.appendChild(frame);
+    }})();
+    """
+    return Response(content=js_code, media_type="application/javascript")
