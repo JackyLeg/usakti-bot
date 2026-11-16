@@ -19,11 +19,31 @@ from qdrant_client import QdrantClient
 import redis
 
 from rag import ensure_collection, ingest_document, delete_document, retrieve_context
-from tools import STUDENT_TOOLS, LAST_TRIGGERED_UI
+from tools import STUDENT_TOOLS, LAST_TRIGGERED_UI, ROLE_MENUS, SUBMENU_MAP
 
 DB_PATH = "/app/data/chatbot.db"
 UPLOAD_DIR = "/app/data/uploads"
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+
+# Map exact button clicks to submenu keys
+EXACT_MENU_TRIGGERS = {
+    "kartu rencana studi (krs)": ("krs", "Kartu Rencana Studi (KRS)"),
+    "krs": ("krs", "Kartu Rencana Studi (KRS)"),
+    "kartu hasil studi (khs)": ("khs", "Kartu Hasil Studi (KHS)"),
+    "khs": ("khs", "Kartu Hasil Studi (KHS)"),
+    "pembayaran": ("pembayaran", "Pembayaran"),
+    "cuti akademik": ("cuti", "Cuti Akademik"),
+    "cuti": ("cuti", "Cuti Akademik"),
+    "transkrip nilai": ("transkrip", "Transkrip Nilai"),
+    "kartu peserta ujian": ("kartu_ujian", "Kartu Peserta Ujian"),
+    "tugas akhir": ("tugas_akhir", "Tugas Akhir"),
+    "wisuda": ("wisuda", "Wisuda"),
+    "skpi": ("skpi", "SKPI"),
+    "konseling": ("konseling", "Konseling"),
+    "pertukaran mahasiswa": ("pertukaran", "Pertukaran Mahasiswa"),
+    "fast track": ("fast_track", "Fast Track"),
+    "profil": ("profil", "Profil"),
+}
 
 def init_db():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -223,6 +243,31 @@ def make_faq_cache_key(role: str, message: str) -> str:
 @app.post("/api/chat")
 def chat_endpoint(req: ChatRequest):
     start_time = time.time()
+    clean_msg = req.message.strip().lower()
+
+    # 0A. Instant deterministic Main Menu response
+    if clean_msg in ("menu apa saja yang tersedia?", "menu apa aja yg tersedia?", "daftar menu", "menu"):
+        buttons = ROLE_MENUS.get(req.role.lower(), ROLE_MENUS["mahasiswa"])
+        return {
+            "reply": "Silakan pilih layanan yang ingin Anda akses melalui tombol di bawah ini:",
+            "custom": {"buttons": buttons},
+            "sources": [],
+            "latency_ms": 1
+        }
+
+    # 0B. Instant deterministic 4 Sub-Menus (Prosedur, Persyaratan, Transaksi, Hasil)
+    if clean_msg in EXACT_MENU_TRIGGERS:
+        cat_key, display_name = EXACT_MENU_TRIGGERS[clean_msg]
+        buttons = SUBMENU_MAP.get(
+            cat_key,
+            [f"Prosedur {display_name}", f"Persyaratan {display_name}", f"Transaksi {display_name}", f"Hasil {display_name}"]
+        )
+        return {
+            "reply": f"Silakan pilih salah satu sub-menu {display_name} di bawah ini:",
+            "custom": {"buttons": buttons},
+            "sources": [],
+            "latency_ms": 1
+        }
     faq_key = make_faq_cache_key(req.role, req.message)
 
     # 1. Check Redis FAQ cache first (saves free API quota & responds in <10ms!)
@@ -252,17 +297,18 @@ def chat_endpoint(req: ChatRequest):
             context_block = "(Tidak ada dokumen panduan yang cocok.)"
             sources_used = []
 
+        # Inside chat_endpoint in backend/main.py:
         LAST_TRIGGERED_UI.pop(req.session_id, None)
 
         augmented_prompt = (
             f"{base_prompt}\n\n"
             f"=== INFO PENGGUNA ===\n"
             f"Session ID: {req.session_id} | Role: {req.role.upper()} | IdLogin: {req.id_login or 'Guest'}\n\n"
-            f"=== ATURAN RESPONS SINGKAT ===\n"
-            f"1. Jawab dengan RINGKAS, PADAT, dan TO THE POINT (maksimal 2-3 kalimat pendek, jangan bertele-tele).\n"
-            f"2. Jika pengguna meminta melihat hasil/data layanan (contoh: 'hasil KHS', 'lihat KRS', 'tagihan pembayaran', 'status cuti'), "
-            f"WAJIB panggil tool `trigger_ui_context(session_id='{req.session_id}', menu_context=...)` dan cukup berikan 1 kalimat pengantar singkat karena aplikasi akan langsung menampilkan tombol/halaman datanya.\n"
-            f"3. Hanya jelaskan langkah-langkah panjang jika pengguna secara spesifik bertanya 'prosedur' atau 'syarat'.\n\n"
+            f"=== ATURAN NAVIGASI MENU STANDAR USAKTI ===\n"
+            f"1. Jika pengguna bertanya 'menu apa saja yang tersedia' atau meminta daftar layanan, WAJIB panggil `show_menu_buttons(session_id='{req.session_id}', category='main', role='{req.role}')`.\n"
+            f"2. Jika pengguna memilih/menyebut topik layanan secara umum (misal hanya mengetik 'KRS', 'Kartu Rencana Studi (KRS)', 'KHS', 'Pembayaran', 'Cuti') TANPA menyebut prosedur/syarat/transaksi/hasil, WAJIB panggil `show_menu_buttons(session_id='{req.session_id}', category=...)` agar muncul 4 sub-menu standar (Prosedur, Persyaratan, Transaksi, Hasil).\n"
+            f"3. Jika pengguna memilih/bertanya 'Prosedur' atau 'Persyaratan', jelaskan dengan ringkas dan jelas berdasarkan dokumen kampus / API SISMOB.\n"
+            f"4. Jika pengguna memilih/bertanya 'Transaksi' atau 'Hasil' (misal 'Hasil KHS', 'Transaksi KRS'), WAJIB panggil `trigger_ui_context(session_id='{req.session_id}', menu_context=...)` dan beri 1 kalimat pengantar singkat.\n\n"
             f"=== KONTEKS DOKUMEN KAMPUS ===\n{context_block}\n"
             f"=============================="
         )
@@ -287,9 +333,8 @@ def chat_endpoint(req: ChatRequest):
             )
         )
         reply = response.text
-
-        triggered_ctx = LAST_TRIGGERED_UI.pop(req.session_id, None)
-        custom_payload = {"context": triggered_ctx} if triggered_ctx else {}
+        custom_payload = LAST_TRIGGERED_UI.pop(req.session_id, {})
+        # custom_payload = {"context": triggered_ctx} if triggered_ctx else {}
 
         # Save conversation history
         history_list.append({"role": "user", "text": req.message})
@@ -297,7 +342,7 @@ def chat_endpoint(req: ChatRequest):
         cache.setex(f"chat_hist:{req.session_id}", 3600, json.dumps(history_list[-20:]))
 
         # Cache standalone FAQ responses for 24h (only if first turn & no personal ID used)
-        if len(history_list) == 2 and not req.id_login:
+        if len(history_list) == 2 and not req.id_login and not custom_payload:
             cache.setex(
                 faq_key,
                 86400,

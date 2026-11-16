@@ -194,10 +194,11 @@
     <div id="messages"></div>
 
     <div class="chips" id="quickChips">
-        <button class="chip" onclick="sendQuick('Lihat hasil KHS semester ini')">📄 Hasil KHS</button>
-        <button class="chip" onclick="sendQuick('Cek pengisian KRS')">📝 Pengisian KRS</button>
-        <button class="chip" onclick="sendQuick('Cek status pembayaran VA BNI')">💳 Pembayaran VA</button>
-        <button class="chip" onclick="sendQuick('Syarat mengajukan cuti akademik')">🗓️ Syarat Cuti</button>
+        <button class="chip" onclick="sendQuick('Menu apa saja yang tersedia?')">📋 Daftar Menu</button>
+        <button class="chip" onclick="sendQuick('Kartu Rencana Studi (KRS)')">📝 KRS</button>
+        <button class="chip" onclick="sendQuick('Kartu Hasil Studi (KHS)')">📄 KHS</button>
+        <button class="chip" onclick="sendQuick('Pembayaran')">💳 Pembayaran</button>
+        <button class="chip" onclick="sendQuick('Cuti Akademik')">🗓️ Cuti</button>
     </div>
 
     <div class="input-bar">
@@ -233,18 +234,34 @@
 
         const msgContainer = document.getElementById("messages");
 
-        function appendMessage(text, sender, customContext = null) {
+        function appendMessage(text, sender, custom = {}) {
             const div = document.createElement("div");
             div.className = `msg ${sender}`;
             div.textContent = text;
 
-            if (sender === "bot" && customContext && MENU_CONFIG[customContext]) {
-                const cfg = MENU_CONFIG[customContext];
+            // 1. Render Rasa-style choice buttons (Main Menus or Prosedur/Persyaratan/Transaksi/Hasil)
+            if (sender === "bot" && custom && Array.isArray(custom.buttons) && custom.buttons.length > 0) {
+                const btnGrid = document.createElement("div");
+                btnGrid.style.cssText = "display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;";
+                custom.buttons.forEach(label => {
+                    const b = document.createElement("button");
+                    b.className = "action-card";
+                    b.style.marginTop = "0";
+                    b.textContent = label;
+                    b.onclick = () => sendQuick(label);
+                    btnGrid.appendChild(b);
+                });
+                div.appendChild(btnGrid);
+            }
+
+            // 2. Render Portal / Mobile App action button for Transaksi / Hasil
+            if (sender === "bot" && custom && custom.context && MENU_CONFIG[custom.context]) {
+                const cfg = MENU_CONFIG[custom.context];
                 const btnWrap = document.createElement("div");
                 const btn = document.createElement("button");
                 btn.className = "action-card";
                 btn.textContent = cfg.label;
-                btn.onclick = () => triggerNativeOrWebAction(customContext, cfg.url);
+                btn.onclick = () => triggerNativeOrWebAction(custom.context, cfg.url);
                 btnWrap.appendChild(btn);
                 div.appendChild(btnWrap);
             }
@@ -308,7 +325,7 @@
                 const data = await res.json();
                 typingEl.remove();
                 const ctx = data.custom ? data.custom.context : null;
-                appendMessage(data.reply || "Maaf, terjadi kesalahan.", "bot", ctx);
+                appendMessage(data.reply || "Maaf, terjadi kesalahan.", "bot", data.custom || {});
             } catch (e) {
                 typingEl.remove();
                 appendMessage("Gagal terhubung ke server. Periksa koneksi internet Anda.", "bot");
