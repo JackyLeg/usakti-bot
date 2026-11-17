@@ -10,39 +10,61 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import httpx
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 from qdrant_client import QdrantClient
 import redis
-
+import re
 from rag import ensure_collection, ingest_document, delete_document, retrieve_context
 from tools import STUDENT_TOOLS, LAST_TRIGGERED_UI, ROLE_MENUS, SUBMENU_MAP
+import base64
+import hmac
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DB_PATH = "/app/data/chatbot.db"
 UPLOAD_DIR = "/app/data/uploads"
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
-# Map exact button clicks to submenu keys
+AUTH_SECRET = os.getenv("CHAT_AUTH_SECRET")
+ALLOW_UNVERIFIED = os.getenv("ALLOW_UNVERIFIED_ROLES")
+
+# Format: "menu_name_lower": ("submenu_key", "Display Name", {"allowed_roles"})
 EXACT_MENU_TRIGGERS = {
-    "kartu rencana studi (krs)": ("krs", "Kartu Rencana Studi (KRS)"),
-    "krs": ("krs", "Kartu Rencana Studi (KRS)"),
-    "kartu hasil studi (khs)": ("khs", "Kartu Hasil Studi (KHS)"),
-    "khs": ("khs", "Kartu Hasil Studi (KHS)"),
-    "pembayaran": ("pembayaran", "Pembayaran"),
-    "cuti akademik": ("cuti", "Cuti Akademik"),
-    "cuti": ("cuti", "Cuti Akademik"),
-    "transkrip nilai": ("transkrip", "Transkrip Nilai"),
-    "kartu peserta ujian": ("kartu_ujian", "Kartu Peserta Ujian"),
-    "tugas akhir": ("tugas_akhir", "Tugas Akhir"),
-    "wisuda": ("wisuda", "Wisuda"),
-    "skpi": ("skpi", "SKPI"),
-    "konseling": ("konseling", "Konseling"),
-    "pertukaran mahasiswa": ("pertukaran", "Pertukaran Mahasiswa"),
-    "fast track": ("fast_track", "Fast Track"),
-    "profil": ("profil", "Profil"),
+    # Mahasiswa-only
+    "kartu rencana studi (krs)": ("krs", "Kartu Rencana Studi (KRS)", {"mahasiswa"}),
+    "krs": ("krs", "Kartu Rencana Studi (KRS)", {"mahasiswa"}),
+    "kartu hasil studi (khs)": ("khs", "Kartu Hasil Studi (KHS)", {"mahasiswa"}),
+    "khs": ("khs", "Kartu Hasil Studi (KHS)", {"mahasiswa"}),
+    "pembayaran": ("pembayaran", "Pembayaran", {"mahasiswa"}),
+    "cuti akademik": ("cuti", "Cuti Akademik", {"mahasiswa"}),
+    "cuti": ("cuti", "Cuti Akademik", {"mahasiswa"}),
+    "transkrip nilai": ("transkrip", "Transkrip Nilai", {"mahasiswa"}),
+    "kartu peserta ujian": ("kartu_ujian", "Kartu Peserta Ujian", {"mahasiswa"}),
+    "tugas akhir": ("tugas_akhir", "Tugas Akhir", {"mahasiswa"}),
+    "wisuda": ("wisuda", "Wisuda", {"mahasiswa"}),
+    "skpi": ("skpi", "SKPI", {"mahasiswa"}),
+    "konseling": ("konseling", "Konseling", {"mahasiswa"}),
+    "pertukaran mahasiswa": ("pertukaran", "Pertukaran Mahasiswa", {"mahasiswa"}),
+    "fast track": ("fast_track", "Fast Track", {"mahasiswa"}),
+    "profil": ("profil", "Profil", {"mahasiswa"}),
+
+    # Dosen & Dosen Wali
+    "jadwal mengajar": ("jadwal_mengajar", "Jadwal Mengajar", {"dosen", "dosenwali"}),
+    "input nilai": ("input_nilai", "Input Nilai", {"dosen", "dosenwali"}),
+    "bimbingan tugas akhir": ("bimbingan_ta", "Bimbingan Tugas Akhir", {"dosen", "dosenwali"}),
+    "penelitian & pengabdian": ("penelitian", "Penelitian & Pengabdian", {"dosen", "dosenwali"}),
+    "profil dosen": ("profil_dosen", "Profil Dosen", {"dosen", "dosenwali"}),
+
+    # Dosen Wali only
+    "approval krs mahasiswa": ("approval_krs", "Approval KRS Mahasiswa", {"dosenwali"}),
+    "monitoring khs mahasiswa": ("monitoring_khs", "Monitoring KHS Mahasiswa", {"dosenwali"}),
+    "persetujuan cuti mahasiswa": ("persetujuan_cuti", "Persetujuan Cuti Mahasiswa", {"dosenwali"}),
+    "perwalian akademik": ("perwalian", "Perwalian Akademik", {"dosenwali"}),
 }
 
 def init_db():
@@ -110,11 +132,25 @@ def verify_admin(x_admin_password: str | None):
     if x_admin_password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid admin password")
 
+def verify_user_token(token: str) -> dict | None:
+    try:
+        payload_b64, sig = token.split(".", 1)
+        expected = hmac.new(AUTH_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        data = json.loads(base64.urlsafe_b64decode(payload_b64 + "=="))
+        if data.get("exp", 0) < time.time():
+            return None
+        return data
+    except Exception:
+        return None
+
 class ChatRequest(BaseModel):
     session_id: str = "default"
-    message: str
+    message: str = Field(..., min_length=1, max_length=800)
+    token: str | None = None
     id_login: str | None = None
-    role: str = "mahasiswa"
+    role: str = "guest"
 
 class SettingsRequest(BaseModel):
     system_prompt: str
@@ -235,14 +271,38 @@ def export_logs_csv(x_admin_password: str | None = Header(default=None)):
     )
 
 # --- CHAT ENDPOINT WITH FAQ CACHE & RATE-LIMIT GUARD ---
-
 def make_faq_cache_key(role: str, message: str) -> str:
     normalized = f"{role.lower().strip()}:{' '.join(message.lower().split())}"
     return "faq_cache:" + hashlib.sha256(normalized.encode()).hexdigest()
 
 @app.post("/api/chat")
-def chat_endpoint(req: ChatRequest):
+def chat_endpoint(req: ChatRequest, request: Request):
     start_time = time.time()
+
+    # 1. Resolve verified identity & role FIRST
+    verified = verify_user_token(req.token) if req.token else None
+    if verified:
+        id_login = verified.get("id_login")
+        user_role = verified.get("role", "guest").lower().strip()
+    elif ALLOW_UNVERIFIED and req.role.lower() in ROLE_MENUS:
+        id_login = req.id_login
+        user_role = req.role.lower().strip()
+    else:
+        id_login = None
+        user_role = "guest"
+
+    # 2. Now check deterministic menus using the verified user_role
+    clean_msg = req.message.strip().lower()
+    if clean_msg in ("menu apa saja yang tersedia?", "menu apa aja yg tersedia?", "daftar menu", "menu"):
+        buttons = ROLE_MENUS.get(user_role, ROLE_MENUS["guest"])
+        return {
+            "reply": "Silakan pilih layanan yang ingin Anda akses melalui tombol di bawah ini:",
+            "custom": {"buttons": buttons},
+            "resolved_role": user_role,
+            "sources": [],
+            "latency_ms": 1
+        }
+
     clean_msg = req.message.strip().lower()
 
     # 0A. Instant deterministic Main Menu response
@@ -256,8 +316,17 @@ def chat_endpoint(req: ChatRequest):
         }
 
     # 0B. Instant deterministic 4 Sub-Menus (Prosedur, Persyaratan, Transaksi, Hasil)
+    user_role = req.role.lower().strip()
     if clean_msg in EXACT_MENU_TRIGGERS:
-        cat_key, display_name = EXACT_MENU_TRIGGERS[clean_msg]
+        cat_key, display_name, allowed_roles = EXACT_MENU_TRIGGERS[clean_msg]
+        if user_role not in allowed_roles:
+            allowed_menus = ROLE_MENUS.get(user_role, ROLE_MENUS["mahasiswa"])
+            return {
+                "reply": f"Maaf, menu {display_name} tidak tersedia untuk role {user_role.upper()}. Silakan pilih menu yang tersedia untuk Anda:",
+                "custom": {"buttons": allowed_menus},
+                "sources": [],
+                "latency_ms": 1
+            }
         buttons = SUBMENU_MAP.get(
             cat_key,
             [f"Prosedur {display_name}", f"Persyaratan {display_name}", f"Transaksi {display_name}", f"Hasil {display_name}"]
@@ -333,6 +402,9 @@ def chat_endpoint(req: ChatRequest):
             )
         )
         reply = response.text
+        reply = re.sub(r'\*\*(.*?)\*\*', r'\1', reply)
+        reply = re.sub(r'\*(.*?)\*', r'\1', reply)
+        reply = reply.replace('`', '').replace('### ', '').replace('## ', '')
         custom_payload = LAST_TRIGGERED_UI.pop(req.session_id, {})
         # custom_payload = {"context": triggered_ctx} if triggered_ctx else {}
 

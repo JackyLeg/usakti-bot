@@ -7,46 +7,78 @@ UI_CONTEXT_EVENT = {}
 LAST_TRIGGERED_UI = {}
 
 # Exact menu & sub-menu structure matching your Rasa Pro standard
+GUEST_MENUS = [
+        "Informasi Pendaftaran (PMB)",
+        "Kalender Akademik",
+        "Kontak BAAK & Layanan"
+    ],
+
+MAHASISWA_MENUS = [
+    "Kartu Rencana Studi (KRS)",
+    "Kartu Hasil Studi (KHS)",
+    "Pembayaran",
+    "Cuti Akademik",
+    "Transkrip Nilai",
+    "Kartu Peserta Ujian",
+    "Tugas Akhir",
+    "Wisuda",
+    "SKPI",
+    "Konseling",
+    "Pertukaran Mahasiswa",
+    "Fast Track",
+    #"Profil"
+]
+
+DOSEN_BASE_MENUS = [
+    "Jadwal Mengajar",
+    "Input Nilai",
+    "Bimbingan Tugas Akhir",
+    "Penelitian & Pengabdian",
+    "Profil Dosen"
+]
+
+DOSENWALI_EXTRA_MENUS = [
+    "Approval KRS Mahasiswa",
+    "Monitoring KHS Mahasiswa",
+    "Persetujuan Cuti Mahasiswa",
+    "Perwalian Akademik"
+]
+
 ROLE_MENUS = {
-    "mahasiswa": [
-        "Kartu Rencana Studi (KRS)",
-        "Kartu Hasil Studi (KHS)",
-        "Pembayaran",
-        "Cuti Akademik",
-        "Transkrip Nilai",
-        "Kartu Peserta Ujian",
-        "Tugas Akhir",
-        "Wisuda",
-        "SKPI",
-        "Konseling",
-        "Pertukaran Mahasiswa",
-        "Fast Track",
-        "Profil"
-    ],
-    "dosen": [
-        "Jadwal Mengajar",
-        "Input Nilai",
-        "Perwalian",
-        "Profil Dosen"
-    ],
-    "dosenwali": [
-        "Approval KRS Mahasiswa",
-        "Monitoring KHS Mahasiswa",
-        "Persetujuan Cuti",
-        "Bimbingan Akademik"
-    ]
+    "guest": GUEST_MENUS,
+    "mahasiswa": MAHASISWA_MENUS,
+    "dosen": DOSEN_BASE_MENUS,
+    "dosenwali": DOSEN_BASE_MENUS + DOSENWALI_EXTRA_MENUS
 }
 
 SUBMENU_MAP = {
+    # Mahasiswa
     "krs": ["Prosedur KRS", "Persyaratan KRS", "Transaksi KRS", "Hasil KRS"],
-    "khs": ["Prosedur KHS", "Persyaratan KHS", "Transaksi KHS", "Hasil KHS"],
-    "pembayaran": ["Prosedur Pembayaran", "Persyaratan Pembayaran", "Transaksi Pembayaran", "Hasil Pembayaran"],
+    "khs": ["Prosedur KHS", "Persyaratan KHS", "Hasil KHS"],
+    "pembayaran": ["Prosedur Pembayaran", "Persyaratan Pembayaran", "Transaksi Pembayaran", "Status Pembayaran"],
     "cuti": ["Prosedur Cuti", "Persyaratan Cuti", "Transaksi Cuti", "Hasil Cuti"],
-    "transkrip": ["Prosedur Transkrip", "Persyaratan Transkrip", "Transaksi Transkrip", "Hasil Transkrip"],
-    "wisuda": ["Prosedur Wisuda", "Persyaratan Wisuda", "Transaksi Wisuda", "Hasil Wisuda"],
+    "transkrip": ["Prosedur Transkrip", "Persyaratan Transkrip", "Hasil Transkrip"],
+    "kartu_ujian": ["Prosedur Kartu Ujian", "Persyaratan Kartu Ujian", "Transaksi Kartu Ujian", "Hasil Kartu Ujian"],
     "tugas_akhir": ["Prosedur Tugas Akhir", "Persyaratan Tugas Akhir", "Transaksi Tugas Akhir", "Hasil Tugas Akhir"],
+    "wisuda": ["Prosedur Wisuda", "Persyaratan Wisuda", "Transaksi Wisuda", "Hasil Wisuda"],
     "skpi": ["Prosedur SKPI", "Persyaratan SKPI", "Transaksi SKPI", "Hasil SKPI"],
     "konseling": ["Prosedur Konseling", "Persyaratan Konseling", "Transaksi Konseling", "Hasil Konseling"],
+    "pertukaran": ["Prosedur Pertukaran Mahasiswa", "Persyaratan Pertukaran Mahasiswa", "Transaksi Pertukaran Mahasiswa", "Hasil Pertukaran Mahasiswa"],
+    "fast_track": ["Prosedur Fast Track", "Persyaratan Fast Track", "Transaksi Fast Track", "Hasil Fast Track"],
+    #"profil": ["Prosedur Profil", "Persyaratan Profil", "Transaksi Profil", "Hasil Profil"],
+    
+    # Dosen
+    "jadwal_mengajar": ["Prosedur Jadwal Mengajar", "Persyaratan Jadwal Mengajar", "Transaksi Jadwal Mengajar", "Hasil Jadwal Mengajar"],
+    "input_nilai": ["Prosedur Input Nilai", "Persyaratan Input Nilai", "Transaksi Input Nilai", "Hasil Input Nilai"],
+    "bimbingan_ta": ["Prosedur Bimbingan TA", "Persyaratan Bimbingan TA", "Transaksi Bimbingan TA", "Hasil Bimbingan TA"],
+    "penelitian": ["Prosedur Penelitian", "Persyaratan Penelitian", "Transaksi Penelitian", "Hasil Penelitian"],
+    "profil_dosen": ["Prosedur Profil Dosen", "Persyaratan Profil Dosen", "Transaksi Profil Dosen", "Hasil Profil Dosen"],
+    
+    # Dosen Wali
+    "approval_krs": ["Prosedur Approval KRS", "Persyaratan Approval KRS", "Transaksi Approval KRS", "Hasil Approval KRS"],
+    "monitoring_khs": ["Prosedur Monitoring KHS", "Persyaratan Monitoring KHS", "Transaksi Monitoring KHS", "Hasil Monitoring KHS"],
+    "persetujuan_cuti": ["Prosedur Persetujuan Cuti", "Persyaratan Persetujuan Cuti", "Transaksi Persetujuan Cuti", "Hasil Persetujuan Cuti"],
+    "perwalian": ["Prosedur Perwalian", "Persyaratan Perwalian", "Transaksi Perwalian", "Hasil Perwalian"],
 }
 
 def show_menu_buttons(session_id: str, category: str = "main", role: str = "mahasiswa") -> str:

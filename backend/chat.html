@@ -194,11 +194,11 @@
     <div id="messages"></div>
 
     <div class="chips" id="quickChips">
-        <button class="chip" onclick="sendQuick('Menu apa saja yang tersedia?')">📋 Daftar Menu</button>
+        <!-- <button class="chip" onclick="sendQuick('Menu apa saja yang tersedia?')">📋 Daftar Menu</button>
         <button class="chip" onclick="sendQuick('Kartu Rencana Studi (KRS)')">📝 KRS</button>
         <button class="chip" onclick="sendQuick('Kartu Hasil Studi (KHS)')">📄 KHS</button>
         <button class="chip" onclick="sendQuick('Pembayaran')">💳 Pembayaran</button>
-        <button class="chip" onclick="sendQuick('Cuti Akademik')">🗓️ Cuti</button>
+        <button class="chip" onclick="sendQuick('Cuti Akademik')">🗓️ Cuti</button> -->
     </div>
 
     <div class="input-bar">
@@ -218,6 +218,46 @@
             ? `Terhubung: ${idLogin} (${role.toUpperCase()})`
             : `Mode Tamu (${role.toUpperCase()})`;
 
+        // Role-specific bottom quick chips
+        const ROLE_CHIPS = {
+            guest: [
+                { label: "📋 Daftar Menu", query: "Menu apa saja yang tersedia?" },
+                { label: "🎓 Info PMB", query: "Informasi Pendaftaran (PMB)" },
+                { label: "📅 Kalender Akademik", query: "Kalender Akademik" }
+            ],
+
+            mahasiswa: [
+                { label: "📋 Daftar Menu", query: "Menu apa saja yang tersedia?" },
+                { label: "📝 KRS", query: "Kartu Rencana Studi (KRS)" },
+                { label: "📄 KHS", query: "Kartu Hasil Studi (KHS)" },
+                { label: "💳 Pembayaran", query: "Pembayaran" },
+                { label: "🗓️ Cuti", query: "Cuti Akademik" }
+            ],
+
+            dosen: [
+                { label: "📋 Daftar Menu", query: "Menu apa saja yang tersedia?" },
+                { label: "📅 Jadwal Mengajar", query: "Jadwal Mengajar" },
+                { label: "✍️ Input Nilai", query: "Input Nilai" },
+                { label: "📚 Bimbingan TA", query: "Bimbingan Tugas Akhir" }
+            ],
+
+            dosenwali: [
+                { label: "📋 Daftar Menu", query: "Menu apa saja yang tersedia?" },
+                { label: "✅ Approval KRS", query: "Approval KRS Mahasiswa" },
+                { label: "📊 Monitoring KHS", query: "Monitoring KHS Mahasiswa" },
+                { label: "📅 Jadwal Mengajar", query: "Jadwal Mengajar" },
+                { label: "✍️ Input Nilai", query: "Input Nilai" }
+            ]
+        };
+
+        const chipsContainer = document.getElementById("quickChips");
+        (ROLE_CHIPS[role.toLowerCase()] || ROLE_CHIPS.mahasiswa).forEach(item => {
+            const btn = document.createElement("button");
+            btn.className = "chip";
+            btn.textContent = item.label;
+            btn.onclick = () => sendQuick(item.query);
+            chipsContainer.appendChild(btn);
+        });
         // Map backend context triggers to readable buttons + portal URLs
         const MENU_CONFIG = {
             kartuHasilStudi: { label: "📄 Buka Kartu Hasil Studi (KHS)", url: "https://student.trisakti.ac.id/" },
