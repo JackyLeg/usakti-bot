@@ -7,7 +7,7 @@ import shutil
 import sqlite3
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
@@ -83,12 +83,21 @@ def init_db():
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS documents (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT UNIQUE,
+            filename TEXT PRIMARY KEY,
             chunk_count INTEGER,
+            faculty TEXT DEFAULT 'UMUM',
+            major TEXT DEFAULT 'UMUM',
             uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Safe migration for existing SQLite databases
+    for col in ("faculty", "major", "notes"):
+        try:
+            default_val = "''" if col == "notes" else "'UMUM'"
+            conn.execute(f"ALTER TABLE documents ADD COLUMN {col} TEXT DEFAULT {default_val}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -146,11 +155,12 @@ def verify_user_token(token: str) -> dict | None:
         return None
 
 class ChatRequest(BaseModel):
-    session_id: str = "default"
-    message: str = Field(..., min_length=1, max_length=800)
-    token: str | None = None
-    id_login: str | None = None
+    session_id: str
+    message: str
     role: str = "guest"
+    id_login: str | None = None
+    token: str | None = None
+    major: str | None = "UMUM"  # <-- Make sure this field exists
 
 class SettingsRequest(BaseModel):
     system_prompt: str
@@ -170,11 +180,31 @@ def admin_ui():
     with open("/app/admin.html", "r", encoding="utf-8") as f:
         return f.read()
 
+def process_upload_bg(file_path: str, filename: str, faculty: str, major: str, notes: str = ""):
+    delete_document(filename, qdrant)
+    chunks_added = ingest_document(
+        file_path, filename, ai_client, qdrant,
+        faculty=faculty, major=major
+    )
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO documents (filename, chunk_count, faculty, major, notes, uploaded_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (filename, chunks_added, faculty, major, notes)
+    )
+    conn.commit()
+    conn.close()
+    cache.flushdb()
+
 @app.post("/api/admin/upload")
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     faculty: str = Form(default="UMUM"),
     major: str = Form(default="UMUM"),
+    notes: str = Form(default=""),
     x_admin_password: str | None = Header(default=None)
 ):
     verify_admin(x_admin_password)
@@ -185,19 +215,49 @@ async def upload_document(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    delete_document(file.filename, qdrant)
-    chunks_added = ingest_document(
-        file_path, file.filename, ai_client, qdrant,
-        faculty=faculty, major=major
+    clean_faculty = faculty.upper().strip() or "UMUM"
+    clean_major = major.upper().strip() or "UMUM"
+    clean_notes = notes.strip()
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO documents (filename, chunk_count, faculty, major, notes, uploaded_at)
+        VALUES (?, -1, ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (file.filename, clean_faculty, clean_major, clean_notes)
     )
+    conn.commit()
+    conn.close()
+
+    background_tasks.add_task(
+        process_upload_bg, file_path, file.filename, clean_faculty, clean_major, clean_notes
+    )
+    return {"filename": file.filename, "chunks_indexed": -1}
 
 @app.get("/api/admin/documents")
 def list_documents(x_admin_password: str | None = Header(default=None)):
     verify_admin(x_admin_password)
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("SELECT filename, chunk_count, uploaded_at FROM documents ORDER BY uploaded_at DESC").fetchall()
+    rows = conn.execute(
+        """
+        SELECT filename, chunk_count, COALESCE(faculty, 'UMUM'), COALESCE(major, 'UMUM'), COALESCE(notes, ''), uploaded_at
+        FROM documents
+        ORDER BY uploaded_at DESC
+        """
+    ).fetchall()
     conn.close()
-    return [{"filename": r[0], "chunk_count": r[1], "uploaded_at": r[2]} for r in rows]
+    return [
+        {
+            "filename": r[0],
+            "chunk_count": r[1],
+            "faculty": r[2],
+            "major": r[3],
+            "notes": r[4],
+            "uploaded_at": r[5],
+        }
+        for r in rows
+    ]
 
 @app.delete("/api/admin/documents/{filename}")
 def remove_document(filename: str, x_admin_password: str | None = Header(default=None)):
@@ -278,12 +338,12 @@ def chat_endpoint(req: ChatRequest, request: Request):
     verified = verify_user_token(req.token) if req.token else None
     if verified:
         id_login = verified.get("id_login")
-        user_role = verified.get("role", "guest").lower().strip()
-        user_major = verified.get("major", "UMUM").upper().strip()
+        user_role = (verified.get("role") or "guest").lower().strip()
+        user_major = (verified.get("major") or "UMUM").upper().strip()
     elif ALLOW_UNVERIFIED and req.role.lower() in ROLE_MENUS:
         id_login = req.id_login
         user_role = req.role.lower().strip()
-        user_major = getattr(req, "major", "UMUM").upper().strip()
+        user_major = (getattr(req, "major", None) or "UMUM").upper().strip()
     else:
         id_login = None
         user_role = "guest"

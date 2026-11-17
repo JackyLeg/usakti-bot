@@ -50,6 +50,7 @@ qdrant_storage/
 data/
 *.db
 *.sqlite3
+uploads/*
 
 # Redis dump
 dump.rdb

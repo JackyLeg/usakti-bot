@@ -1,9 +1,11 @@
 import os
+import re
 import uuid
 from pypdf import PdfReader
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchAny
+
 
 COLLECTION_NAME = "usakti_kb"
 EMBED_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
@@ -109,6 +111,23 @@ def delete_document(filename: str, qdrant: QdrantClient):
         )
     )
 
+def expand_usakti_query(query: str) -> str:
+    replacements = [
+        (r"\bmatkul\b", "mata kuliah"),
+        (r"\bmk\b", "mata kuliah"),
+        (r"\btif\b", "Teknik Informatika"),
+        (r"\bsi\b", "Sistem Informasi"),
+        (r"\bte\b", "Teknik Elektro"),
+        (r"\bti\b", "Teknik Industri"),
+        (r"\bta\b", "Tugas Akhir"),
+        (r"\bskripsi\b", "Tugas Akhir Skripsi"),
+        (r"\bsmt\b", "semester"),
+    ]
+    expanded = query
+    for pattern, full_term in replacements:
+        expanded = re.sub(pattern, full_term, expanded, flags=re.IGNORECASE)
+    return expanded
+
 def retrieve_context(
     query: str,
     ai_client,  # Kept in signature so main.py calls don't break
@@ -117,7 +136,9 @@ def retrieve_context(
     top_k: int = 5
 ) -> list[dict]:
     ensure_collection(qdrant)
-    query_vec = next(embed_model.embed([query])).tolist()
+
+    expanded_query = expand_usakti_query(query)
+    query_vec = next(embed_model.embed([expanded_query])).tolist()
 
     allowed_majors = ["UMUM"]
     if major and major.upper() != "UMUM":

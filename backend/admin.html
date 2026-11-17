@@ -6,16 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Usakti Chatbot - Admin Dashboard</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: #f4f6f9;
             margin: 0;
-            padding: 24px;
+            padding: 20px;
             color: #1f2937;
         }
 
         .container {
-            max-width: 960px;
+            max-width: 1100px;
+            width: 100%;
             margin: 0 auto;
         }
 
@@ -25,6 +30,7 @@
             padding: 20px;
             margin-bottom: 20px;
             box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+            overflow-x: auto;
         }
 
         h1,
@@ -34,13 +40,73 @@
         }
 
         input[type="password"],
+        input[type="text"],
+        input[type="search"],
+        input[type="file"],
+        select,
         textarea {
             width: 100%;
             padding: 10px;
             border: 1px solid #d1d5db;
             border-radius: 6px;
-            box-sizing: border-box;
             font-size: 14px;
+            background: #fff;
+            color: #1f2937;
+        }
+
+        select:disabled,
+        input:disabled {
+            background: #f3f4f6;
+            color: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .upload-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .upload-bar .field-group {
+            flex: 1 1 160px;
+            min-width: 140px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .upload-bar label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #4b5563;
+            text-transform: uppercase;
+        }
+
+        .upload-bar button {
+            flex: 0 0 auto;
+            align-self: flex-end;
+            height: 40px;
+        }
+
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .filter-bar input[type="search"] {
+            flex: 1 1 280px;
+        }
+
+        .doc-count {
+            font-size: 12px;
+            color: #6b7280;
+            font-weight: 500;
         }
 
         button {
@@ -52,6 +118,7 @@
             cursor: pointer;
             font-weight: 600;
             font-size: 14px;
+            white-space: nowrap;
         }
 
         button:hover {
@@ -80,11 +147,29 @@
             text-align: left;
             padding: 10px;
             border-bottom: 1px solid #e5e7eb;
-            vertical-align: top;
+            vertical-align: middle;
         }
 
         th {
             background: #f9fafb;
+            user-select: none;
+        }
+
+        th.sortable {
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        th.sortable:hover {
+            background: #eef2ff;
+            color: #1e3a8a;
+        }
+
+        .sort-icon {
+            display: inline-block;
+            margin-left: 4px;
+            font-size: 11px;
+            color: #6b7280;
         }
 
         .hidden {
@@ -93,15 +178,64 @@
 
         .row {
             display: flex;
+            flex-wrap: wrap;
             gap: 10px;
             align-items: center;
         }
 
         .status {
             font-size: 13px;
-            margin-top: 8px;
+            margin-top: 10px;
             color: #059669;
             font-weight: 500;
+        }
+
+        .doc-notes {
+            display: block;
+            margin-top: 4px;
+            font-size: 12px;
+            color: #6b7280;
+            font-style: italic;
+        }
+
+        .tag-wrap {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+
+        .tag-faculty {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .tag-major {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .tag-umum {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .badge-indexing {
+            display: inline-block;
+            background: #fef3c7;
+            color: #92400e;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
         }
     </style>
 </head>
@@ -114,7 +248,8 @@
         <div id="loginCard" class="card">
             <h2>Login Admin</h2>
             <div class="row">
-                <input type="password" id="adminPass" placeholder="Masukkan ADMIN_PASSWORD..." />
+                <input type="password" id="adminPass" placeholder="Masukkan ADMIN_PASSWORD..." style="flex: 1 1 240px;"
+                    onkeydown="if (event.key === 'Enter') { event.preventDefault(); login(); }" />
                 <button onclick="login()">Masuk</button>
             </div>
             <p id="loginErr" style="color:#dc2626; font-size:13px;"></p>
@@ -125,17 +260,65 @@
             <!-- 1. Knowledge Base -->
             <div class="card">
                 <h2>📚 Knowledge Base (Dokumen Panduan)</h2>
-                <div class="row">
-                    <input type="file" id="docFile" accept=".pdf,.txt,.md" />
+                <div class="upload-bar">
+                    <div class="field-group" style="flex: 2 1 230px;">
+                        <label for="docFile">1. File Panduan (.PDF / .TXT / .MD)</label>
+                        <input type="file" id="docFile" accept=".pdf,.txt,.md" onchange="onFileSelected()"
+                            onkeydown="if (event.key === 'Enter') { event.preventDefault(); uploadDoc(); }" />
+                    </div>
+                    <div class="field-group" style="flex: 0.9 1 120px;">
+                        <label for="docFaculty">2. Fakultas</label>
+                        <select id="docFaculty" disabled onchange="onFacultyChange()"
+                            onkeydown="if (event.key === 'Enter') { event.preventDefault(); uploadDoc(); }">
+                            <option value="UMUM" selected>UMUM</option>
+                            <option value="FH">FH</option>
+                            <option value="FEB">FEB</option>
+                            <option value="FK">FK</option>
+                            <option value="FKG">FKG</option>
+                            <option value="FTSP">FTSP</option>
+                            <option value="FTI">FTI</option>
+                            <option value="FTKE">FTKE</option>
+                            <option value="FALTL">FALTL</option>
+                            <option value="FSRD">FSRD</option>
+                        </select>
+                    </div>
+                    <div class="field-group" style="flex: 1.6 1 220px;">
+                        <label for="docMajor">3. Program Studi</label>
+                        <select id="docMajor" disabled
+                            onkeydown="if (event.key === 'Enter') { event.preventDefault(); uploadDoc(); }">
+                            <option value="UMUM" selected>UMUM</option>
+                        </select>
+                    </div>
+                    <div class="field-group" style="flex: 1.5 1 200px;">
+                        <label for="docNotes">4. Catatan (Opsional)</label>
+                        <input type="text" id="docNotes" disabled placeholder="catatan tambahan"
+                            onkeydown="if (event.key === 'Enter') { event.preventDefault(); uploadDoc(); }" />
+                    </div>
                     <button onclick="uploadDoc()">Upload & Index</button>
                 </div>
                 <p id="uploadStatus" class="status"></p>
+
+                <!-- Search & Filter Bar -->
+                <div class="filter-bar">
+                    <input type="search" id="docSearch"
+                        placeholder="🔍 Cari nama file, fakultas (FTI), prodi (INFORMATIKA), atau catatan..."
+                        oninput="renderDocsTable()" />
+                    <span id="docCount" class="doc-count"></span>
+                </div>
+
                 <table>
                     <thead>
                         <tr>
-                            <th>Nama File</th>
-                            <th>Jumlah Chunks</th>
-                            <th>Waktu Upload</th>
+                            <th class="sortable" onclick="toggleSort('filename')">
+                                Nama File <span id="sort-filename" class="sort-icon">⇅</span>
+                            </th>
+                            <th>Tag Fakultas & Prodi</th>
+                            <th class="sortable" onclick="toggleSort('chunk_count')">
+                                Jumlah Chunks <span id="sort-chunk_count" class="sort-icon">⇅</span>
+                            </th>
+                            <th class="sortable" onclick="toggleSort('uploaded_at')">
+                                Waktu Upload <span id="sort-uploaded_at" class="sort-icon">▼</span>
+                            </th>
                             <th>Aksi</th>
                         </tr>
                     </thead>
@@ -157,7 +340,7 @@
             <div class="card">
                 <div class="row" style="justify-content: space-between;">
                     <h2 style="margin:0;">💬 Riwayat Interaksi Terbaru</h2>
-                    <div>
+                    <div class="row">
                         <button onclick="loadLogs()">Refresh</button>
                         <button class="secondary" onclick="exportCSV()">Download CSV</button>
                     </div>
@@ -180,9 +363,102 @@
 
     <script>
         let PASS = "";
+        let pollTimer = null;
+        let allDocs = [];
+        let sortState = { key: "uploaded_at", dir: "desc" };
+
+        const FACULTY_MAJORS = {
+            "UMUM": [{ value: "UMUM", label: "UMUM" }],
+            "FH": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "ILMU HUKUM", label: "ILMU HUKUM" }
+            ],
+            "FEB": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "EKONOMI PEMBANGUNAN", label: "EKONOMI PEMBANGUNAN" },
+                { value: "MANAJEMEN", label: "MANAJEMEN" },
+                { value: "AKUNTANSI", label: "AKUNTANSI" },
+                { value: "D4 KEUANGAN", label: "D4 KEUANGAN" },
+                { value: "D3 PERPAJAKAN", label: "D3 PERPAJAKAN" },
+                { value: "D3 MANAJEMEN JASA", label: "D3 MANAJEMEN JASA (MICE)" },
+                { value: "D3 AKUNTANSI SEKTOR PUBLIK", label: "D3 AKUNTANSI SEKTOR PUBLIK" },
+                { value: "D3 KEUANGAN PERBANKAN SYARIAH", label: "D3 KEUANGAN PERBANKAN SYARIAH" }
+            ],
+            "FK": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "KEDOKTERAN", label: "KEDOKTERAN" },
+                { value: "PROFESI DOKTER", label: "PROFESI DOKTER" }
+            ],
+            "FKG": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "KEDOKTERAN GIGI", label: "KEDOKTERAN GIGI" },
+                { value: "PROFESI DOKTER GIGI", label: "PROFESI DOKTER GIGI" }
+            ],
+            "FTSP": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "TEKNIK SIPIL", label: "TEKNIK SIPIL" },
+                { value: "ARSITEKTUR", label: "ARSITEKTUR" }
+            ],
+            "FTI": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "TEKNIK MESIN", label: "TEKNIK MESIN" },
+                { value: "TEKNIK ELEKTRO", label: "TEKNIK ELEKTRO" },
+                { value: "TEKNIK INDUSTRI", label: "TEKNIK INDUSTRI" },
+                { value: "INFORMATIKA,SISTEM INFORMASI", label: "INFORMATIKA DAN SISTEM INFORMASI" }
+            ],
+            "FTKE": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "TEKNIK PERMINYAKAN", label: "TEKNIK PERMINYAKAN" },
+                { value: "TEKNIK GEOLOGI", label: "TEKNIK GEOLOGI" },
+                { value: "TEKNIK PERTAMBANGAN", label: "TEKNIK PERTAMBANGAN" }
+            ],
+            "FALTL": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "ARSITEKTUR LANSKAP", label: "ARSITEKTUR LANSKAP" },
+                { value: "TEKNIK LINGKUNGAN", label: "TEKNIK LINGKUNGAN" },
+                { value: "PERENCANAAN WILAYAH DAN KOTA", label: "PERENCANAAN WILAYAH DAN KOTA" }
+            ],
+            "FSRD": [
+                { value: "UMUM", label: "UMUM" },
+                { value: "DESAIN INTERIOR", label: "DESAIN INTERIOR" },
+                { value: "DESAIN PRODUK", label: "DESAIN PRODUK" },
+                { value: "DESAIN KOMUNIKASI VISUAL", label: "DESAIN KOMUNIKASI VISUAL" },
+                { value: "FOTOGRAFI", label: "FOTOGRAFI" }
+            ]
+        };
+
+        function onFileSelected() {
+            const fileInput = document.getElementById("docFile");
+            const facultyEl = document.getElementById("docFaculty");
+            const majorEl = document.getElementById("docMajor");
+            const notesEl = document.getElementById("docNotes");
+
+            const hasFile = fileInput.files.length > 0;
+            facultyEl.disabled = !hasFile;
+            majorEl.disabled = !hasFile;
+            notesEl.disabled = !hasFile;
+
+            if (hasFile) {
+                facultyEl.value = "UMUM";
+                onFacultyChange();
+                setTimeout(() => facultyEl.focus(), 50);
+            }
+        }
+
+        function onFacultyChange() {
+            const fac = document.getElementById("docFaculty").value || "UMUM";
+            const majorEl = document.getElementById("docMajor");
+            const options = FACULTY_MAJORS[fac] || [{ value: "UMUM", label: "UMUM" }];
+
+            majorEl.innerHTML = options.map(opt =>
+                `<option value="${opt.value}">${opt.label}</option>`
+            ).join("");
+            majorEl.value = "UMUM";
+        }
 
         async function api(url, opts = {}) {
             opts.headers = { ...(opts.headers || {}), "x-admin-password": PASS };
+            opts.cache = "no-store";
             const res = await fetch(url, opts);
             if (!res.ok) throw new Error(await res.text());
             return res;
@@ -201,40 +477,168 @@
             }
         }
 
+        function toggleSort(key) {
+            if (sortState.key === key) {
+                sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+            } else {
+                sortState.key = key;
+                sortState.dir = key === "filename" ? "asc" : "desc";
+            }
+            updateSortIcons();
+            renderDocsTable();
+        }
+
+        function updateSortIcons() {
+            ["filename", "chunk_count", "uploaded_at"].forEach(k => {
+                const el = document.getElementById(`sort-${k}`);
+                if (!el) return;
+                if (sortState.key === k) {
+                    el.textContent = sortState.dir === "asc" ? "▲" : "▼";
+                } else {
+                    el.textContent = "⇅";
+                }
+            });
+        }
+
+        function formatTags(faculty, major) {
+            const fac = (faculty || "UMUM").toUpperCase();
+            const majors = (major || "UMUM").split(",").map(m => m.trim().toUpperCase()).filter(Boolean);
+
+            const facClass = fac === "UMUM" ? "tag tag-umum" : "tag tag-faculty";
+            const facBadge = `<span class="${facClass}" title="Fakultas">${fac}</span>`;
+
+            const majorBadges = majors.map(m => {
+                const cls = m === "UMUM" ? "tag tag-umum" : "tag tag-major";
+                return `<span class="${cls}" title="Program Studi">${m}</span>`;
+            }).join("");
+
+            return `<div class="tag-wrap">${facBadge}${majorBadges}</div>`;
+        }
+
+        function renderDocsTable() {
+            const query = (document.getElementById("docSearch")?.value || "").trim().toLowerCase();
+
+            const filtered = allDocs.filter(d => {
+                if (!query) return true;
+                const haystack = `${d.filename} ${d.faculty || "UMUM"} ${d.major || "UMUM"} ${d.notes || ""}`.toLowerCase();
+                return haystack.includes(query);
+            });
+
+            const { key, dir } = sortState;
+            const multiplier = dir === "asc" ? 1 : -1;
+
+            filtered.sort((a, b) => {
+                let valA = a[key];
+                let valB = b[key];
+
+                if (key === "chunk_count") {
+                    const numA = typeof valA === "number" ? valA : -1;
+                    const numB = typeof valB === "number" ? valB : -1;
+                    return (numA - numB) * multiplier;
+                }
+
+                valA = (valA || "").toString().toLowerCase();
+                valB = (valB || "").toString().toLowerCase();
+                return valA.localeCompare(valB, "id") * multiplier;
+            });
+
+            document.getElementById("docCount").textContent =
+                `Menampilkan ${filtered.length} dari ${allDocs.length} dokumen`;
+
+            document.getElementById("docList").innerHTML = filtered.map(d => {
+                const isIndexing = d.chunk_count === -1 || d.chunk_count === "indexing...";
+                const chunkCell = isIndexing
+                    ? `<span class="badge-indexing">⏳ Sedang indexing...</span>`
+                    : d.chunk_count;
+
+                const notesHtml = d.notes
+                    ? `<span class="doc-notes">📝 ${d.notes}</span>`
+                    : "";
+
+                return `
+                    <tr>
+                        <td>
+                            <strong>${d.filename}</strong>
+                            ${notesHtml}
+                        </td>
+                        <td>${formatTags(d.faculty, d.major)}</td>
+                        <td>${chunkCell}</td>
+                        <td style="white-space:nowrap;">${d.uploaded_at || "-"}</td>
+                        <td><button class="danger" onclick="delDoc('${d.filename}')">Hapus</button></td>
+                    </tr>
+                `;
+            }).join("") || "<tr><td colspan='5'>Tidak ada dokumen yang cocok.</td></tr>";
+        }
+
         async function loadDocs() {
             const res = await api("/api/admin/documents");
-            const docs = await res.json();
-            document.getElementById("docList").innerHTML = docs.map(d => `
-        <tr>
-          <td><strong>${d.filename}</strong></td>
-          <td>${d.chunk_count}</td>
-          <td>${d.uploaded_at}</td>
-          <td><button class="danger" onclick="delDoc('${d.filename}')">Hapus</button></td>
-        </tr>
-      `).join("") || "<tr><td colspan='4'>Belum ada dokumen.</td></tr>";
+            allDocs = await res.json();
+
+            const stillIndexing = allDocs.some(
+                d => d.chunk_count === -1 || d.chunk_count === "indexing..."
+            );
+
+            renderDocsTable();
+
+            if (stillIndexing && !pollTimer) {
+                pollTimer = setInterval(loadDocs, 3000);
+            } else if (!stillIndexing && pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                document.getElementById("uploadStatus").innerText = "Semua dokumen selesai di-index!";
+            }
         }
 
         async function uploadDoc() {
             const fileInput = document.getElementById("docFile");
             if (!fileInput.files.length) return;
+
+            const file = fileInput.files[0];
+            const facultyEl = document.getElementById("docFaculty");
+            const majorEl = document.getElementById("docMajor");
+            const notesEl = document.getElementById("docNotes");
+
+            const faculty = (facultyEl.value || "UMUM").trim().toUpperCase();
+            const major = (majorEl.value || "UMUM").trim().toUpperCase();
+            const notes = (notesEl.value || "").trim();
+
             const fd = new FormData();
-            fd.append("file", fileInput.files[0]);
-            document.getElementById("uploadStatus").innerText = "Mengunggah & memproses embeddings...";
+            fd.append("file", file);
+            fd.append("faculty", faculty);
+            fd.append("major", major);
+            fd.append("notes", notes);
+
+            document.getElementById("uploadStatus").innerText = `Mengunggah ${file.name} (${faculty} / ${major})...`;
             try {
                 const res = await api("/api/admin/upload", { method: "POST", body: fd });
-                const data = await res.json();
-                document.getElementById("uploadStatus").innerText = `Berhasil! ${data.filename} (${data.chunks_indexed} chunks).`;
+                const rawText = await res.text();
+                const data = rawText ? JSON.parse(rawText) : null;
+
+                if (data && typeof data.chunks_indexed === "number" && data.chunks_indexed >= 0) {
+                    document.getElementById("uploadStatus").innerText = `Selesai! ${data.filename} (${data.chunks_indexed} chunks).`;
+                } else {
+                    document.getElementById("uploadStatus").innerText = `File diterima! Sedang memproses embeddings di background...`;
+                }
+
+                // Reset form & lock dropdowns until next file is selected
                 fileInput.value = "";
-                loadDocs();
+                facultyEl.value = "UMUM";
+                onFacultyChange();
+                notesEl.value = "";
+                facultyEl.disabled = true;
+                majorEl.disabled = true;
+                notesEl.disabled = true;
             } catch (e) {
                 document.getElementById("uploadStatus").innerText = "Gagal upload: " + e.message;
+            } finally {
+                await loadDocs();
             }
         }
 
         async function delDoc(name) {
             if (!confirm(`Hapus ${name} dari knowledge base?`)) return;
             await api(`/api/admin/documents/${encodeURIComponent(name)}`, { method: "DELETE" });
-            loadDocs();
+            await loadDocs();
         }
 
         async function loadPrompt() {
@@ -258,14 +662,14 @@
             const res = await api("/api/admin/logs");
             const logs = await res.json();
             document.getElementById("logList").innerHTML = logs.map(l => `
-        <tr>
-          <td style="white-space:nowrap;">${l.created_at}</td>
-          <td>${l.user_message}</td>
-          <td>${l.bot_response}</td>
-          <td>${l.sources || "-"}</td>
-          <td>${l.latency_ms} ms</td>
-        </tr>
-      `).join("") || "<tr><td colspan='5'>Belum ada log chat.</td></tr>";
+                <tr>
+                    <td style="white-space:nowrap;">${l.created_at}</td>
+                    <td>${l.user_message}</td>
+                    <td>${l.bot_response}</td>
+                    <td>${l.sources || "-"}</td>
+                    <td>${l.latency_ms} ms</td>
+                </tr>
+            `).join("") || "<tr><td colspan='5'>Belum ada log chat.</td></tr>";
         }
 
         async function exportCSV() {
