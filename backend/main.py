@@ -451,7 +451,42 @@ def chat_endpoint(req: ChatRequest, request: Request):
         "latency_ms": latency
     }
 
+# --- RASA REST COMPATIBILITY ADAPTER ---
+class RasaWebhookRequest(BaseModel):
+    sender: str = "default"
+    message: str
+    metadata: dict | None = None
 
+@app.post("/webhooks/rest/webhook")
+def rasa_compatible_webhook(req: RasaWebhookRequest, request: Request):
+    meta = req.metadata or {}
+    internal_req = ChatRequest(
+        session_id=req.sender,
+        message=req.message,
+        token=meta.get("token"),
+        id_login=meta.get("id_login") or req.sender,
+        role=meta.get("role", "mahasiswa")
+    )
+    res = chat_endpoint(internal_req, request)
+
+    # Format output identically to Rasa Pro REST channel
+    rasa_messages = []
+    msg_obj = {"recipient_id": req.sender, "text": res["reply"]}
+
+    custom = res.get("custom") or {}
+    if custom.get("buttons"):
+        msg_obj["buttons"] = [{"title": b, "payload": b} for b in custom["buttons"]]
+
+    rasa_messages.append(msg_obj)
+
+    if custom.get("context"):
+        rasa_messages.append({
+            "recipient_id": req.sender,
+            "custom": {"context": custom["context"]}
+        })
+
+    return rasa_messages
+#---------------------------------
 
 @app.get("/chat", response_class=HTMLResponse)
 def chat_ui():
