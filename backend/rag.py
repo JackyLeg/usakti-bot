@@ -1,15 +1,26 @@
 import os
 import uuid
 from pypdf import PdfReader
-from google import genai
-from google.genai import types
+from fastembed import TextEmbedding
 from qdrant_client import QdrantClient, models
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchAny
 
 COLLECTION_NAME = "usakti_kb"
-VECTOR_SIZE = 3072  # Default dimension for gemini-embedding-001
+EMBED_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+VECTOR_SIZE = 768
+
+# Initialize once at module import (downloads & caches ONNX model on first boot)
+embed_model = TextEmbedding(model_name=EMBED_MODEL_NAME)
 
 def ensure_collection(qdrant: QdrantClient):
     collections = [c.name for c in qdrant.get_collections().collections]
+    if COLLECTION_NAME in collections:
+        info = qdrant.get_collection(COLLECTION_NAME)
+        existing_size = info.config.params.vectors.size
+        if existing_size != VECTOR_SIZE:
+            qdrant.delete_collection(COLLECTION_NAME)
+            collections.remove(COLLECTION_NAME)
+
     if COLLECTION_NAME not in collections:
         qdrant.create_collection(
             collection_name=COLLECTION_NAME,
@@ -19,55 +30,68 @@ def ensure_collection(qdrant: QdrantClient):
             )
         )
 
-def chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> list[str]:
-    text = " ".join(text.split())  # Normalize whitespace
+def chunk_text(text: str, chunk_size: int = 450, overlap: int = 80) -> list[str]:
+    words = text.split()
     chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
-    return [c.strip() for c in chunks if len(c.strip()) > 30]
+    step = max(1, chunk_size - overlap)
+    for i in range(0, len(words), step):
+        chunk = " ".join(words[i:i + chunk_size])
+        if chunk.strip():
+            chunks.append(chunk)
+    return chunks
 
-def extract_text_from_file(file_path: str) -> str:
+def extract_text(file_path: str) -> str:
     if file_path.lower().endswith(".pdf"):
         reader = PdfReader(file_path)
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
-    else:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
+        pages = []
+        for idx, page in enumerate(reader.pages, start=1):
+            txt = page.extract_text() or ""
+            if txt.strip():
+                pages.append(f"[Halaman {idx}]\n{txt}")
+        return "\n\n".join(pages)
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        return f.read()
 
-def ingest_document(file_path: str, filename: str, ai_client: genai.Client, qdrant: QdrantClient) -> int:
+def ingest_document(
+    file_path: str,
+    filename: str,
+    ai_client,  # Kept in signature so main.py calls don't break
+    qdrant: QdrantClient,
+    faculty: str = "UMUM",
+    major: str = "UMUM"
+) -> int:
     ensure_collection(qdrant)
-    raw_text = extract_text_from_file(file_path)
+    raw_text = extract_text(file_path)
     chunks = chunk_text(raw_text)
     if not chunks:
         return 0
 
-    # Embed chunks in batches of 50 using gemini-embedding-001
-    points = []
-    batch_size = 50
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i : i + batch_size]
-        embed_res = ai_client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=batch,
-            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
-        )
-        for chunk_str, emb in zip(batch, embed_res.embeddings):
-            points.append(
-                models.PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=emb.values,
-                    payload={
-                        "source": filename,
-                        "text": chunk_str
-                    }
-                )
-            )
+    major_list = [m.strip().upper() for m in major.split(",") if m.strip()] or ["UMUM"]
+    batch_size = 32
+    total_indexed = 0
 
-    qdrant.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
-    return len(points)
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        # fastembed returns a generator of numpy float32 arrays
+        vectors = list(embed_model.embed(batch))
+
+        points = [
+            PointStruct(
+                id=str(uuid.uuid4()),
+                vector=vec.tolist(),
+                payload={
+                    "source": filename,
+                    "faculty": faculty.upper().strip(),
+                    "major": major_list,
+                    "text": chunk
+                }
+            )
+            for chunk, vec in zip(batch, vectors)
+        ]
+        qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
+        total_indexed += len(points)
+
+    return total_indexed
 
 def delete_document(filename: str, qdrant: QdrantClient):
     ensure_collection(qdrant)
@@ -85,27 +109,42 @@ def delete_document(filename: str, qdrant: QdrantClient):
         )
     )
 
-def retrieve_context(query: str, ai_client: genai.Client, qdrant: QdrantClient, top_k: int = 4) -> list[dict]:
+def retrieve_context(
+    query: str,
+    ai_client,  # Kept in signature so main.py calls don't break
+    qdrant: QdrantClient,
+    major: str | None = None,
+    top_k: int = 5
+) -> list[dict]:
     ensure_collection(qdrant)
-    embed_res = ai_client.models.embed_content(
-        model="gemini-embedding-001",
-        contents=query,
-        config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
-    )
-    query_vector = embed_res.embeddings[0].values
+    query_vec = next(embed_model.embed([query])).tolist()
 
-    results = qdrant.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_vector,
-        limit=top_k,
-        score_threshold=0.45  # Filter out completely irrelevant matches
+    allowed_majors = ["UMUM"]
+    if major and major.upper() != "UMUM":
+        allowed_majors.append(major.upper().strip())
+
+    query_filter = Filter(
+        must=[
+            FieldCondition(
+                key="major",
+                match=MatchAny(any=allowed_majors)
+            )
+        ]
     )
+
+    hits = qdrant.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vec,
+        query_filter=query_filter,
+        limit=top_k
+    ).points
 
     return [
         {
-            "source": hit.payload.get("source", "Unknown"),
-            "text": hit.payload.get("text", ""),
-            "score": round(hit.score, 3)
+            "source": h.payload.get("source", "unknown"),
+            "major": h.payload.get("major", "UMUM"),
+            "text": h.payload.get("text", ""),
+            "score": h.score
         }
-        for hit in results.points
+        for h in hits
     ]

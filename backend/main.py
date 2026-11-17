@@ -7,7 +7,7 @@ import shutil
 import sqlite3
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
@@ -173,6 +173,8 @@ def admin_ui():
 @app.post("/api/admin/upload")
 async def upload_document(
     file: UploadFile = File(...),
+    faculty: str = Form(default="UMUM"),
+    major: str = Form(default="UMUM"),
     x_admin_password: str | None = Header(default=None)
 ):
     verify_admin(x_admin_password)
@@ -184,17 +186,10 @@ async def upload_document(
         shutil.copyfileobj(file.file, buffer)
 
     delete_document(file.filename, qdrant)
-    chunks_added = ingest_document(file_path, file.filename, ai_client, qdrant)
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT OR REPLACE INTO documents (filename, chunk_count) VALUES (?, ?)",
-        (file.filename, chunks_added)
+    chunks_added = ingest_document(
+        file_path, file.filename, ai_client, qdrant,
+        faculty=faculty, major=major
     )
-    conn.commit()
-    conn.close()
-    cache.flushdb()
-    return {"filename": file.filename, "chunks_indexed": chunks_added}
 
 @app.get("/api/admin/documents")
 def list_documents(x_admin_password: str | None = Header(default=None)):
@@ -284,15 +279,20 @@ def chat_endpoint(req: ChatRequest, request: Request):
     if verified:
         id_login = verified.get("id_login")
         user_role = verified.get("role", "guest").lower().strip()
+        user_major = verified.get("major", "UMUM").upper().strip()
     elif ALLOW_UNVERIFIED and req.role.lower() in ROLE_MENUS:
         id_login = req.id_login
         user_role = req.role.lower().strip()
+        user_major = getattr(req, "major", "UMUM").upper().strip()
     else:
         id_login = None
         user_role = "guest"
+        user_major = "UMUM"
 
     # 2. Now check deterministic menus using the verified user_role
     clean_msg = req.message.strip().lower()
+
+    # 2A. Instant deterministic Main Menu response
     if clean_msg in ("menu apa saja yang tersedia?", "menu apa aja yg tersedia?", "daftar menu", "menu"):
         buttons = ROLE_MENUS.get(user_role, ROLE_MENUS["guest"])
         return {
@@ -303,27 +303,15 @@ def chat_endpoint(req: ChatRequest, request: Request):
             "latency_ms": 1
         }
 
-    clean_msg = req.message.strip().lower()
-
-    # 0A. Instant deterministic Main Menu response
-    if clean_msg in ("menu apa saja yang tersedia?", "menu apa aja yg tersedia?", "daftar menu", "menu"):
-        buttons = ROLE_MENUS.get(req.role.lower(), ROLE_MENUS["mahasiswa"])
-        return {
-            "reply": "Silakan pilih layanan yang ingin Anda akses melalui tombol di bawah ini:",
-            "custom": {"buttons": buttons},
-            "sources": [],
-            "latency_ms": 1
-        }
-
-    # 0B. Instant deterministic 4 Sub-Menus (Prosedur, Persyaratan, Transaksi, Hasil)
-    user_role = req.role.lower().strip()
+    # 2B. Instant deterministic 4 Sub-Menus (Prosedur, Persyaratan, Transaksi, Hasil)
     if clean_msg in EXACT_MENU_TRIGGERS:
         cat_key, display_name, allowed_roles = EXACT_MENU_TRIGGERS[clean_msg]
         if user_role not in allowed_roles:
-            allowed_menus = ROLE_MENUS.get(user_role, ROLE_MENUS["mahasiswa"])
+            allowed_menus = ROLE_MENUS.get(user_role, ROLE_MENUS["guest"])
             return {
                 "reply": f"Maaf, menu {display_name} tidak tersedia untuk role {user_role.upper()}. Silakan pilih menu yang tersedia untuk Anda:",
                 "custom": {"buttons": allowed_menus},
+                "resolved_role": user_role,
                 "sources": [],
                 "latency_ms": 1
             }
@@ -334,10 +322,11 @@ def chat_endpoint(req: ChatRequest, request: Request):
         return {
             "reply": f"Silakan pilih salah satu sub-menu {display_name} di bawah ini:",
             "custom": {"buttons": buttons},
+            "resolved_role": user_role,
             "sources": [],
             "latency_ms": 1
         }
-    faq_key = make_faq_cache_key(req.role, req.message)
+    faq_key = make_faq_cache_key(user_role, req.message)
 
     # 1. Check Redis FAQ cache first (saves free API quota & responds in <10ms!)
     cached_raw = cache.get(faq_key)
@@ -358,7 +347,13 @@ def chat_endpoint(req: ChatRequest, request: Request):
 
     try:
         # 2. Retrieve relevant docs from Qdrant
-        matches = retrieve_context(f"[{req.role}] {req.message}", ai_client, qdrant, top_k=4)
+        matches = retrieve_context(
+            f"[{user_role}] {req.message}",
+            ai_client,
+            qdrant,
+            major=user_major,
+            top_k=5
+        )
         if matches:
             context_block = "\n\n".join([f"[Sumber: {m['source']}]\n{m['text']}" for m in matches])
             sources_used = list(dict.fromkeys([m["source"] for m in matches]))
@@ -372,9 +367,9 @@ def chat_endpoint(req: ChatRequest, request: Request):
         augmented_prompt = (
             f"{base_prompt}\n\n"
             f"=== INFO PENGGUNA ===\n"
-            f"Session ID: {req.session_id} | Role: {req.role.upper()} | IdLogin: {req.id_login or 'Guest'}\n\n"
-            f"=== ATURAN NAVIGASI MENU STANDAR USAKTI ===\n"
-            f"1. Jika pengguna bertanya 'menu apa saja yang tersedia' atau meminta daftar layanan, WAJIB panggil `show_menu_buttons(session_id='{req.session_id}', category='main', role='{req.role}')`.\n"
+            f"Session ID: {req.session_id} | Role: {user_role.upper()} | IdLogin: {id_login or 'Guest'}\n\n"
+f"=== ATURAN NAVIGASI MENU STANDAR USAKTI ===\n"
+f"1. Jika pengguna bertanya 'menu apa saja yang tersedia' atau meminta daftar layanan, WAJIB panggil `show_menu_buttons(session_id='{req.session_id}', category='main', role='{user_role}')`.\n"
             f"2. Jika pengguna memilih/menyebut topik layanan secara umum (misal hanya mengetik 'KRS', 'Kartu Rencana Studi (KRS)', 'KHS', 'Pembayaran', 'Cuti') TANPA menyebut prosedur/syarat/transaksi/hasil, WAJIB panggil `show_menu_buttons(session_id='{req.session_id}', category=...)` agar muncul 4 sub-menu standar (Prosedur, Persyaratan, Transaksi, Hasil).\n"
             f"3. Jika pengguna memilih/bertanya 'Prosedur' atau 'Persyaratan', jelaskan dengan ringkas dan jelas berdasarkan dokumen kampus / API SISMOB.\n"
             f"4. Jika pengguna memilih/bertanya 'Transaksi' atau 'Hasil' (misal 'Hasil KHS', 'Transaksi KRS'), WAJIB panggil `trigger_ui_context(session_id='{req.session_id}', menu_context=...)` dan beri 1 kalimat pengantar singkat.\n\n"

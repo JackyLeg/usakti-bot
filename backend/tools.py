@@ -1,8 +1,6 @@
 import json
 import requests
 
-# Store UI context triggers per request so your mobile/web app still receives {"context": "..."}!
-UI_CONTEXT_EVENT = {}
 # Track UI triggers per request
 LAST_TRIGGERED_UI = {}
 
@@ -11,7 +9,7 @@ GUEST_MENUS = [
         "Informasi Pendaftaran (PMB)",
         "Kalender Akademik",
         "Kontak BAAK & Layanan"
-    ],
+    ]
 
 MAHASISWA_MENUS = [
     "Kartu Rencana Studi (KRS)",
@@ -128,7 +126,7 @@ def trigger_ui_context(session_id: str, menu_context: str) -> str:
     Memicu tombol aksi layanan/portal di aplikasi mobile atau website SIS Trisakti.
     Gunakan fungsi ini HANYA jika user memilih atau meminta 'Hasil' atau 'Transaksi' dari suatu layanan
     (contoh: 'Hasil KHS', 'Transaksi KRS', 'Hasil Pembayaran', 'Transaksi Cuti').
-    Nilai menu_context: 'kartuHasilStudi', 'kartuRencanaStudi', 'cuti', 'pembayaran', 'transkrip', 'wisuda', 'konseling', 'skpi', 'tugasAkhir', 'profil'.
+    Nilai menu_context: 'kartuHasilStudi', 'kartuRencanaStudi', 'cuti', 'pembayaran', 'transkrip', 'wisuda', 'konseling', 'skpi', 'tugasAkhir', 'kartuUjian', 'pertukaranMahasiswa', 'fastTrack'.
     """
     LAST_TRIGGERED_UI.setdefault(session_id, {})["context"] = menu_context
     return json.dumps({
@@ -139,12 +137,3 @@ def trigger_ui_context(session_id: str, menu_context: str) -> str:
 
 
 STUDENT_TOOLS = [show_menu_buttons, get_peraturan_sismob, trigger_ui_context]
-
-def open_sis_menu_ui(menu_context: str) -> str:
-    """
-    Memicu tampilan tombol/card menu di aplikasi mobile atau website SIS Trisakti.
-    Gunakan fungsi ini saat user ingin melihat hasil/halaman layanan tertentu, seperti:
-    'kartuHasilStudi', 'kartuRencanaStudi', 'cuti', 'pembayaran', 'transkrip', 'wisuda', 'konseling', 'skpi', 'tugasAkhir', 'profil'.
-    """
-    UI_CONTEXT_EVENT["context"] = menu_context
-    return json.dumps({"status": "ui_triggered", "context": menu_context})
