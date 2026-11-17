@@ -1,0 +1,20 @@
+tools.py
+def trigger_ui_context(session_id: str, menu_context: str) -> str:
+    # sebutin semua menu yg available di tiap role, including dosen dan dosenwali
+
+
+field fakultas dan prodi masih blm work, sementara keduanya pakai UMUM dahulu
+
+
+buat database untuk menampung knowledgebase aggar sinkron
+
+hashing password admin
+
+api key tier 1 gemini
+
+
+dari csv yg didapat di admin, apakah data ini bisa digubnakan untuk knowledge base utk chatbot? 
+
+tambahan:
+berikan favicon untuk chat dan admin
+poles tampilan agar jgn di ai ai kan lah

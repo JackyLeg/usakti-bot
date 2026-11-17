@@ -100,3 +100,8 @@ ehthumbs.db
 *.swp
 *.swo
 *~
+
+# usakti-bot/to-do.txt
+usakti-bot/backend/old-main.py
+usakti-bot/backend/old-rag.py
+usakti-bot/old-docker-compose.yml
