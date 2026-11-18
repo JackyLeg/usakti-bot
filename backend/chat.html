@@ -51,7 +51,14 @@
             display: block;
         }
 
-        .reset-btn {
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .reset-btn,
+        .report-btn {
             background: rgba(255, 255, 255, 0.18);
             border: none;
             color: #fff;
@@ -59,6 +66,17 @@
             border-radius: 6px;
             font-size: 12px;
             cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+
+        .reset-btn:hover,
+        .report-btn:hover {
+            background: rgba(255, 255, 255, 0.28);
         }
 
         #messages {
@@ -188,7 +206,11 @@
             <h1>🎓 Asisten Virtual Usakti</h1>
             <span id="roleBadge">Layanan Informasi Akademik</span>
         </div>
-        <button class="reset-btn" onclick="resetChat()">Reset</button>
+        <div class="header-actions">
+            <a href="https://forms.gle/PtQ6K1FXxVUaL1GP7" target="_blank" rel="noopener noreferrer" class="report-btn"
+                title="Laporkan Bug / Kendala">Report Bug</a>
+            <button class="reset-btn" onclick="resetChat()">Reset</button>
+        </div>
     </header>
 
     <div id="messages"></div>
